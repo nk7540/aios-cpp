@@ -1,0 +1,16 @@
+OBJS=main.o
+
+CFLAGS  += -O2 -Wall -g --target=x86_64-elf -ffreestanding -mno-red-zone \
+					 -fno-exceptions -fno-rtti -std=c++17
+LDFLAGS += --entry main -z norelro --image-base 0x100000 --static
+
+.PHONY: all
+
+all: kernel.elf
+	cp kernel.elf ../image
+
+kernel.elf: $(OBJS) Makefile
+	ld.lld $(LDFLAGS) -o kernel.elf $(OBJS)
+
+%.o: %.cpp Makefile
+	clang++ $(CFLAGS) -c $< -o $@

@@ -60,8 +60,7 @@ EFI_STATUS EFIAPI UefiMain(
 
   EFI_FILE_PROTOCOL *file;
   status = root_dir->Open(
-    root_dir, &file, L"memmap",
-    EFI_FILE_MODE_READ | EFI_FILE_MODE_WRITE | EFI_FILE_MODE_CREATE, 0);
+    root_dir, &file, L"kernel.elf", EFI_FILE_MODE_READ, 0);
   if (EFI_ERROR(status)) {
     Print(L"failed to open file: %r\n", status);
     Halt();
