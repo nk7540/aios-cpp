@@ -3,6 +3,7 @@
 #include <Library/UefiBootServicesTableLib.h>
 #include <Protocol/LoadedImage.h>
 #include <Protocol/SimpleFileSystem.h>
+#include <Guid/FileInfo.h>
 
 void Halt(void) {
   while (1) __asm__("hlt");
@@ -48,6 +49,26 @@ EFI_STATUS OpenRootDir(EFI_HANDLE image_handle, EFI_FILE_PROTOCOL **root_dir) {
   return file_system->OpenVolume(file_system, root_dir);
 }
 
+EFI_STATUS ReadFile(EFI_FILE_PROTOCOL *file, VOID **file_buf_ptr) {
+  EFI_STATUS status;
+
+  UINTN file_info_size = sizeof(EFI_FILE_INFO) + 11 * sizeof(CHAR16);
+  CHAR8 file_info_buf[file_info_size];
+  status = file->GetInfo(
+    file, &gEfiFileInfoGuid, &file_info_size, &file_info_buf);
+  if (EFI_ERROR(status)) {
+    return status;
+  }
+
+  UINTN file_size = ((EFI_FILE_INFO*)file_info_buf)->FileSize;
+  status = gBS->AllocatePool(EfiLoaderData, file_size, file_buf_ptr);
+  if (EFI_ERROR(status)) {
+    return status;
+  }
+
+  return file->Read(file, &file_size, *file_buf_ptr);
+}
+
 /*
  * Entry point of the UEFI application
  * This will be called by the UEFI firmware on platforms with parameters shown below:
@@ -74,8 +95,9 @@ EFI_STATUS EFIAPI UefiMain(
   Print(L"Root dir opened.\n");
 
 
-  // Open kernel file
+  // Open and read kernel file
   EFI_FILE_PROTOCOL *file;
+  VOID              *file_buf;
   status = root_dir->Open(
     root_dir, &file, L"kernel.elf", EFI_FILE_MODE_READ, 0);
   if (EFI_ERROR(status)) {
@@ -83,12 +105,21 @@ EFI_STATUS EFIAPI UefiMain(
     Halt();
   }
   Print(L"File opened.\n");
+  status = ReadFile(file, &file_buf);
+  if (EFI_ERROR(status)) {
+    Print(L"failed to read file: %r\n", status);
+    Halt();
+  }
+  Print(L"File read.\n");
   status = file->Close(file);
   if (EFI_ERROR(status)) {
     Print(L"failed to close file: %r\n", status);
     Halt();
   }
   Print(L"File closed.\n");
+
+
+  // Allocate memory for kernel
 
 
   // Get memory map
