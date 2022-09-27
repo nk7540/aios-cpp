@@ -18,6 +18,7 @@ load: LoaderPkg/Main.c
 	ln -sf $(THIS_DIR)LoaderPkg edk2
 	cd edk2; source edksetup.sh;\
 	build -p LoaderPkg/LoaderPkg.dsc -b DEBUG -a X64 -t CLANG38 -v
+	mkdir -p image/EFI/BOOT
 	cp edk2/Build/LoaderX64/DEBUG_CLANG38/X64/Loader.efi image/EFI/BOOT/BOOTX64.EFI
 
 kernel:

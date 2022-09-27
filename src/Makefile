@@ -7,6 +7,7 @@ LDFLAGS += --entry main -z norelro --image-base 0x100000 --static
 .PHONY: all
 
 all: kernel.elf
+	mkdir -p ../image
 	cp kernel.elf ../image
 
 kernel.elf: $(OBJS) Makefile
