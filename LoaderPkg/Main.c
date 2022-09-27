@@ -91,6 +91,24 @@ EFI_STATUS EFIAPI UefiMain(
   Print(L"File closed.\n");
 
 
+  // Get memory map
+  CHAR8 map[4096*4];
+  UINTN map_size=sizeof(map), map_key, descriptor_size;
+  UINT32 descriptor_version;
+  status = gBS->GetMemoryMap(
+    &map_size, (EFI_MEMORY_DESCRIPTOR*)map, &map_key,
+    &descriptor_size, &descriptor_version);
+  if (EFI_ERROR(status)) {
+    Print(L"failed to get memory map: %r\n", status);
+    if (status == EFI_BUFFER_TOO_SMALL) {
+      Print(L"Needed buffer size: %d bytes\n", map_size);
+    }
+    Halt();
+  }
+  Print(L"Memory map copied.\n");
+  Print(L"Memory map size: %d bytes\n", map_size);
+  Print(L"Memory descriptor size: %d bytes\n", descriptor_size);
+
   Print(L"Hello, AIOS!\n");
   while(1);
   return EFI_SUCCESS;
