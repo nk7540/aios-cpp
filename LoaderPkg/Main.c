@@ -55,7 +55,7 @@ void Halt() {
 //
 // Open the root directory on the same volume as the code is read
 //
-EFI_STATUS OpenRootDir(EFI_HANDLE image_handle, EFI_FILE_PROTOCOL **root_dir) {
+void OpenRootDir(EFI_HANDLE image_handle, EFI_FILE_PROTOCOL **root_dir) {
   EFI_STATUS                      status;
   EFI_LOADED_IMAGE_PROTOCOL       *loaded_image;
   EFI_SIMPLE_FILE_SYSTEM_PROTOCOL *file_system;
@@ -70,7 +70,8 @@ EFI_STATUS OpenRootDir(EFI_HANDLE image_handle, EFI_FILE_PROTOCOL **root_dir) {
     EFI_OPEN_PROTOCOL_BY_HANDLE_PROTOCOL
   );
   if (EFI_ERROR(status)) {
-    return status;
+    Print(L"failed to open loaded image protocol: %r\n", status);
+    Halt();
   }
   Print(L"EFI loaded image protocol opened.\n");
 
@@ -85,31 +86,87 @@ EFI_STATUS OpenRootDir(EFI_HANDLE image_handle, EFI_FILE_PROTOCOL **root_dir) {
     EFI_OPEN_PROTOCOL_BY_HANDLE_PROTOCOL
   );
   if (EFI_ERROR(status)) {
-    return status;
+    Print(L"failed to open simple file system protocol: %r\n", status);
+    Halt();
   }
   Print(L"EFI simple file system protocol opened.\n");
 
-  return file_system->OpenVolume(file_system, root_dir);
+  status = file_system->OpenVolume(file_system, root_dir);
+  if (EFI_ERROR(status)) {
+    Print(L"failed to open volume: %r\n", status);
+    Halt();
+  }
+  Print(L"Root dir opened.\n");
 }
 
-EFI_STATUS ReadFile(EFI_FILE_PROTOCOL *file, VOID **file_buf_ptr) {
+void OpenAndReadFile(EFI_FILE_PROTOCOL *root_dir, CHAR16 *file_name, VOID **file_buf_ptr) {
   EFI_STATUS status;
+  EFI_FILE_PROTOCOL *file;
+
+  status = root_dir->Open(
+    root_dir, &file, L"kernel.elf", EFI_FILE_MODE_READ, 0);
+  if (EFI_ERROR(status)) {
+    Print(L"failed to open file: %r\n", status);
+    Halt();
+  }
+  Print(L"File opened.\n");
 
   UINTN file_info_size = sizeof(EFI_FILE_INFO) + 11 * sizeof(CHAR16);
   CHAR8 file_info_buf[file_info_size];
   status = file->GetInfo(
     file, &gEfiFileInfoGuid, &file_info_size, &file_info_buf);
   if (EFI_ERROR(status)) {
-    return status;
+    Print(L"failed to get file info: %r\n", status);
+    Halt();
   }
 
   UINTN file_size = ((EFI_FILE_INFO*)file_info_buf)->FileSize;
   status = gBS->AllocatePool(EfiLoaderData, file_size, file_buf_ptr);
   if (EFI_ERROR(status)) {
-    return status;
+    Print(L"failed to allocate pool: %r\n", status);
+    Halt();
   }
+  status = file->Read(file, &file_size, *file_buf_ptr);
+  if (EFI_ERROR(status)) {
+    Print(L"failed to read file: %r\n", status);
+    Halt();
+  }
+  Print(L"File read.\n");
+  status = file->Close(file);
+  if (EFI_ERROR(status)) {
+    Print(L"failed to close file: %r\n", status);
+    Halt();
+  }
+  Print(L"File closed.\n");
+}
 
-  return file->Read(file, &file_size, *file_buf_ptr);
+void LoadELF(void *file_buf) {
+  EFI_STATUS status;
+  Elf64_Ehdr *ehdr = (Elf64_Ehdr*)file_buf;
+  Print(L"entry: %x\n", ehdr->e_entry);
+  Print(L"phoff: %d\n", ehdr->e_phoff);
+  Print(L"phentsize: %d\n", ehdr->e_phentsize);
+  Print(L"phnum: %d\n", ehdr->e_phnum);
+  Elf64_Phdr phdr;
+  for (int i = 0; i < ehdr->e_phnum; i++) {
+    phdr = *(Elf64_Phdr*)(file_buf + ehdr->e_phoff + i * ehdr->e_phentsize);
+    if ((int)phdr.p_type != PT_LOAD) continue;
+    Print(L"PT_LOAD type segment %d, v_addr: %x, memsz: %d\n", i, phdr.p_vaddr, phdr.p_memsz);
+
+    status = gBS->AllocatePages(
+      AllocateAddress, EfiLoaderData,
+      (phdr.p_memsz + 4095) / 4096, (EFI_PHYSICAL_ADDRESS*)&phdr.p_vaddr);
+    if (EFI_ERROR(status)) {
+      Print(L"failed to allocate pages: %r\n", status);
+      Halt();
+    }
+    Print(L"Pages allocated for segment %d.\n", i);
+    CopyMem((void*)phdr.p_vaddr, (void*)(file_buf + phdr.p_offset), phdr.p_filesz);
+    if (phdr.p_filesz < phdr.p_memsz) {
+      SetMem((void*)(phdr.p_vaddr + phdr.p_filesz), phdr.p_memsz - phdr.p_filesz, 0);
+    }
+    Print(L"File copied.\n");
+  }
 }
 
 void GetMemoryMap(MemoryMap *map) {
@@ -157,89 +214,26 @@ EFI_STATUS EFIAPI UefiMain(
 ) {
   Print(L"Bootloader entry point loaded.\n");
   EFI_STATUS status;
-
-
   MemoryMap map;
-  GetMemoryMap(&map);
-  PrintMemoryMap(&map);
-
-
-  // Open root directory
   EFI_FILE_PROTOCOL *root_dir;
-  status = OpenRootDir(image_handle, &root_dir);
-  if (EFI_ERROR(status)) {
-    Print(L"failed to open root directory: %r\n", status);
-    Halt();
-  }
-  Print(L"Root dir opened.\n");
+  VOID *file_buf;
 
+  GetMemoryMap(&map);
+  OpenRootDir(image_handle, &root_dir);
+  OpenAndReadFile(root_dir, L"kernel.elf", &file_buf);
+  LoadELF(file_buf);
 
-  // Open and read kernel file
-  EFI_FILE_PROTOCOL *file;
-  VOID              *file_buf;
-  status = root_dir->Open(
-    root_dir, &file, L"kernel.elf", EFI_FILE_MODE_READ, 0);
-  if (EFI_ERROR(status)) {
-    Print(L"failed to open file: %r\n", status);
-    Halt();
-  }
-  Print(L"File opened.\n");
-  status = ReadFile(file, &file_buf);
-  if (EFI_ERROR(status)) {
-    Print(L"failed to read file: %r\n", status);
-    Halt();
-  }
-  Print(L"File read.\n");
-  status = file->Close(file);
-  if (EFI_ERROR(status)) {
-    Print(L"failed to close file: %r\n", status);
-    Halt();
-  }
-  Print(L"File closed.\n");
-
-
-  // Allocate memory for kernel
-  Elf64_Ehdr ehdr = *(Elf64_Ehdr*)file_buf;
-  Print(L"entry: %x\n", ehdr.e_entry);
-  Print(L"phoff: %d\n", ehdr.e_phoff);
-  Print(L"phentsize: %d\n", ehdr.e_phentsize);
-  Print(L"phnum: %d\n", ehdr.e_phnum);
-  Elf64_Phdr phdr;
-  for (int i = 0; i < ehdr.e_phnum; i++) {
-    phdr = *(Elf64_Phdr*)(file_buf + ehdr.e_phoff + i * ehdr.e_phentsize);
-    if ((int)phdr.p_type != PT_LOAD) continue;
-    Print(L"PT_LOAD type segment %d, v_addr: %x, memsz: %d\n", i, phdr.p_vaddr, phdr.p_memsz);
-
-    status = gBS->AllocatePages(
-      AllocateAddress, EfiLoaderData,
-      (phdr.p_memsz + 4095) / 4096, (EFI_PHYSICAL_ADDRESS*)&phdr.p_vaddr);
-    if (EFI_ERROR(status)) {
-      Print(L"failed to allocate pages: %r\n", status);
-      Halt();
-    }
-    Print(L"Pages allocated for segment %d.\n", i);
-    CopyMem((void*)phdr.p_vaddr, (void*)(file_buf + phdr.p_offset), phdr.p_filesz);
-    if (phdr.p_filesz < phdr.p_memsz) {
-      SetMem((void*)(phdr.p_vaddr + phdr.p_filesz), phdr.p_memsz - phdr.p_filesz, 0);
-    }
-    Print(L"File copied.\n");
-  }
-
-
-  // Exit boot services and call entry point
   GetMemoryMap(&map);
   status = gBS->ExitBootServices(image_handle, map.map_key);
   if (EFI_ERROR(status)) {
     Print(L"failed to exit boot services: %r\n", status);
     Halt();
   }
+
   typedef void EntryPoint();
-  EntryPoint* entry_point = (EntryPoint*)ehdr.e_entry;
+  UINTN entry_point_address = *(UINTN*)(file_buf + 24); // ehdr->e_entry
+  EntryPoint* entry_point = (EntryPoint*)entry_point_address;
   entry_point();
 
-
-
-  Print(L"Hello, AIOS!\n");
-  Halt();
   return EFI_SUCCESS;
 }
