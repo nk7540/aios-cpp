@@ -5,7 +5,37 @@
 #include <Protocol/SimpleFileSystem.h>
 #include <Guid/FileInfo.h>
 
-void Halt(void) {
+//
+// ELF typedef (spec here: https://uclibc.org/docs/elf-64-gen.pdf)
+//
+typedef void*              Elf64_Addr;
+typedef unsigned long long Elf64_Off;
+typedef unsigned short     Elf64_Half;
+typedef unsigned long      Elf64_Word;
+typedef unsigned long long Elf64_Xword;
+// ELF header
+typedef struct {
+  char          a[24];
+  Elf64_Addr    e_entry;     /* Entry point address */
+  Elf64_Off     e_phoff;     /* Program header offset */
+  char          b[14];
+  Elf64_Half    e_phentsize; /* Size of program header entry */
+  Elf64_Half    e_phnum;     /* Number of program header entries */
+} Elf64_Ehdr;
+// ELF Program header
+typedef struct {
+  Elf64_Word    p_type;      /* Type of segment */
+  Elf64_Word    p_flags;     /* Segment attributes */
+  Elf64_Off     p_offset;    /* Offset in file */
+  Elf64_Addr    p_vaddr;     /* Virtual address in memory */
+  Elf64_Addr    p_paddr;     /* Reserved */
+  Elf64_Xword   p_filesz;    /* Size of segment in file */
+  Elf64_Xword   p_memsz;     /* Size of segment in memory */
+  Elf64_Xword   p_align;     /* Alignment of segment */
+} Elf64_Phdr;
+
+
+void Halt() {
   while (1) __asm__("hlt");
 }
 
@@ -120,6 +150,11 @@ EFI_STATUS EFIAPI UefiMain(
 
 
   // Allocate memory for kernel
+  Elf64_Ehdr ehdr = *(Elf64_Ehdr*)file_buf;
+  Print(L"phoff: %d\n", ehdr.e_phoff);
+  Print(L"phentsize: %d\n", ehdr.e_phentsize);
+  Print(L"phnum: %d\n", ehdr.e_phnum);
+
 
 
   // Get memory map
