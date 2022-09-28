@@ -99,18 +99,25 @@ void OpenRootDir(EFI_HANDLE image_handle, EFI_FILE_PROTOCOL **root_dir) {
   Print(L"Root dir opened.\n");
 }
 
-void OpenAndReadFile(EFI_FILE_PROTOCOL *root_dir, CHAR16 *file_name, VOID **file_buf_ptr) {
+/*
+ * Open the specified file in the given directory
+ * and read the data into buffer
+*/
+void OpenAndReadFile(
+  EFI_FILE_PROTOCOL *root_dir, CHAR16 *file_name, VOID **file_buf_ptr) {
   EFI_STATUS status;
   EFI_FILE_PROTOCOL *file;
 
+  // Open file in read mode
   status = root_dir->Open(
-    root_dir, &file, L"kernel.elf", EFI_FILE_MODE_READ, 0);
+    root_dir, &file, file_name, EFI_FILE_MODE_READ, 0);
   if (EFI_ERROR(status)) {
     Print(L"failed to open file: %r\n", status);
     Halt();
   }
   Print(L"File opened.\n");
 
+  // Get file info to look up the size of file and allocate enough memory
   UINTN file_info_size = sizeof(EFI_FILE_INFO) + 11 * sizeof(CHAR16);
   CHAR8 file_info_buf[file_info_size];
   status = file->GetInfo(
@@ -120,6 +127,7 @@ void OpenAndReadFile(EFI_FILE_PROTOCOL *root_dir, CHAR16 *file_name, VOID **file
     Halt();
   }
 
+  // Allocate memory and read out the data into the space
   UINTN file_size = ((EFI_FILE_INFO*)file_info_buf)->FileSize;
   status = gBS->AllocatePool(EfiLoaderData, file_size, file_buf_ptr);
   if (EFI_ERROR(status)) {
@@ -132,6 +140,8 @@ void OpenAndReadFile(EFI_FILE_PROTOCOL *root_dir, CHAR16 *file_name, VOID **file
     Halt();
   }
   Print(L"File read.\n");
+
+  // Close file
   status = file->Close(file);
   if (EFI_ERROR(status)) {
     Print(L"failed to close file: %r\n", status);
@@ -140,6 +150,9 @@ void OpenAndReadFile(EFI_FILE_PROTOCOL *root_dir, CHAR16 *file_name, VOID **file
   Print(L"File closed.\n");
 }
 
+//
+// Load ELF-formatted EXEC file
+// 
 void LoadELF(void *file_buf) {
   EFI_STATUS status;
   Elf64_Ehdr *ehdr = (Elf64_Ehdr*)file_buf;
@@ -147,6 +160,10 @@ void LoadELF(void *file_buf) {
   Print(L"phoff: %d\n", ehdr->e_phoff);
   Print(L"phentsize: %d\n", ehdr->e_phentsize);
   Print(L"phnum: %d\n", ehdr->e_phnum);
+
+  // Loop for program headers, find LOAD type segments and copy them to proper address
+  // Set 0 in specified memory space that doesn't have corresponding file contents
+  // It becomes an error if the specified memory space is not available
   Elf64_Phdr phdr;
   for (int i = 0; i < ehdr->e_phnum; i++) {
     phdr = *(Elf64_Phdr*)(file_buf + ehdr->e_phoff + i * ehdr->e_phentsize);
