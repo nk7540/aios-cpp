@@ -52,6 +52,37 @@ void Halt() {
   while (1) __asm__("hlt");
 }
 
+void GetMemoryMap(MemoryMap *map) {
+  EFI_STATUS status;
+  CHAR8 buf[4096*4];
+  map->map_buffer = buf;
+  map->map_size = sizeof(buf);
+  status = gBS->GetMemoryMap(
+    &map->map_size, (EFI_MEMORY_DESCRIPTOR*)map->map_buffer, &map->map_key,
+    &map->descriptor_size, &map->descriptor_version);
+  if (EFI_ERROR(status)) {
+    Print(L"failed to get memory map: %r\n", status);
+    if (status == EFI_BUFFER_TOO_SMALL) {
+      Print(L"Given buffer size: %d bytes\n", sizeof(buf));
+      Print(L"Needed buffer size: %d bytes\n", map->map_size);
+    }
+    Halt();
+  }
+}
+
+void PrintMemoryMap(MemoryMap *map) {
+  Print(L"Memory map copied.\n");
+  Print(L"Memory map size: %d bytes\n", map->map_size);
+  Print(L"Memory descriptor size: %d bytes\n", map->descriptor_size);
+  EFI_MEMORY_DESCRIPTOR *dsc;
+  for (int i = 0; i < map->map_size / map->descriptor_size; i++) {
+    dsc = (EFI_MEMORY_DESCRIPTOR*)(map->map_buffer + i * map->descriptor_size);
+    if (dsc->Type != EfiConventionalMemory) continue;
+    Print(L"Memory descriptor %d, type: %d, p_start: %x, n_pages: %d\n"
+      ,i, dsc->Type, dsc->PhysicalStart, dsc->NumberOfPages);
+  }
+}
+
 //
 // Open the root directory on the same volume as the code is read
 //
@@ -183,37 +214,6 @@ void LoadELF(void *file_buf) {
       SetMem((void*)(phdr.p_vaddr + phdr.p_filesz), phdr.p_memsz - phdr.p_filesz, 0);
     }
     Print(L"File copied.\n");
-  }
-}
-
-void GetMemoryMap(MemoryMap *map) {
-  EFI_STATUS status;
-  CHAR8 buf[4096*4];
-  map->map_buffer = buf;
-  map->map_size = sizeof(buf);
-  status = gBS->GetMemoryMap(
-    &map->map_size, (EFI_MEMORY_DESCRIPTOR*)map->map_buffer, &map->map_key,
-    &map->descriptor_size, &map->descriptor_version);
-  if (EFI_ERROR(status)) {
-    Print(L"failed to get memory map: %r\n", status);
-    if (status == EFI_BUFFER_TOO_SMALL) {
-      Print(L"Given buffer size: %d bytes\n", sizeof(buf));
-      Print(L"Needed buffer size: %d bytes\n", map->map_size);
-    }
-    Halt();
-  }
-}
-
-void PrintMemoryMap(MemoryMap *map) {
-  Print(L"Memory map copied.\n");
-  Print(L"Memory map size: %d bytes\n", map->map_size);
-  Print(L"Memory descriptor size: %d bytes\n", map->descriptor_size);
-  EFI_MEMORY_DESCRIPTOR *dsc;
-  for (int i = 0; i < map->map_size / map->descriptor_size; i++) {
-    dsc = (EFI_MEMORY_DESCRIPTOR*)(map->map_buffer + i * map->descriptor_size);
-    if (dsc->Type != EfiConventionalMemory) continue;
-    Print(L"Memory descriptor %d, type: %d, p_start: %x, n_pages: %d\n"
-      ,i, dsc->Type, dsc->PhysicalStart, dsc->NumberOfPages);
   }
 }
 
