@@ -12,7 +12,7 @@
 typedef void*              Elf64_Addr;
 typedef unsigned long long Elf64_Off;
 typedef unsigned short     Elf64_Half;
-typedef unsigned long      Elf64_Word;
+typedef unsigned int       Elf64_Word;
 typedef unsigned long long Elf64_Xword;
 #define PT_LOAD 1
 // ELF header
@@ -128,12 +128,12 @@ void GetMemoryMap(MemoryMap *map) {
     }
     Halt();
   }
-  Print(L"Memory map copied.\n");
-  Print(L"Memory map size: %d bytes\n", map->map_size);
-  Print(L"Memory descriptor size: %d bytes\n", map->descriptor_size);
 }
 
 void PrintMemoryMap(MemoryMap *map) {
+  Print(L"Memory map copied.\n");
+  Print(L"Memory map size: %d bytes\n", map->map_size);
+  Print(L"Memory descriptor size: %d bytes\n", map->descriptor_size);
   EFI_MEMORY_DESCRIPTOR *dsc;
   for (int i = 0; i < map->map_size / map->descriptor_size; i++) {
     dsc = (EFI_MEMORY_DESCRIPTOR*)(map->map_buffer + i * map->descriptor_size);
@@ -200,6 +200,7 @@ EFI_STATUS EFIAPI UefiMain(
 
   // Allocate memory for kernel
   Elf64_Ehdr ehdr = *(Elf64_Ehdr*)file_buf;
+  Print(L"entry: %x\n", ehdr.e_entry);
   Print(L"phoff: %d\n", ehdr.e_phoff);
   Print(L"phentsize: %d\n", ehdr.e_phentsize);
   Print(L"phnum: %d\n", ehdr.e_phnum);
@@ -207,7 +208,7 @@ EFI_STATUS EFIAPI UefiMain(
   for (int i = 0; i < ehdr.e_phnum; i++) {
     phdr = *(Elf64_Phdr*)(file_buf + ehdr.e_phoff + i * ehdr.e_phentsize);
     if ((int)phdr.p_type != PT_LOAD) continue;
-    Print(L"PT_LOAD type phdr %d, v_addr: %x, memsz: %d\n", i, phdr.p_vaddr, phdr.p_memsz);
+    Print(L"PT_LOAD type segment %d, v_addr: %x, memsz: %d\n", i, phdr.p_vaddr, phdr.p_memsz);
 
     status = gBS->AllocatePages(
       AllocateAddress, EfiLoaderData,
@@ -216,12 +217,26 @@ EFI_STATUS EFIAPI UefiMain(
       Print(L"failed to allocate pages: %r\n", status);
       Halt();
     }
-    Print(L"Pages allocated for phdr %d.\n", i);
-    CopyMem((void*)phdr.p_vaddr, (void*)phdr.p_offset, phdr.p_filesz);
+    Print(L"Pages allocated for segment %d.\n", i);
+    CopyMem((void*)phdr.p_vaddr, (void*)(file_buf + phdr.p_offset), phdr.p_filesz);
     if (phdr.p_filesz < phdr.p_memsz) {
       SetMem((void*)(phdr.p_vaddr + phdr.p_filesz), phdr.p_memsz - phdr.p_filesz, 0);
     }
+    Print(L"File copied.\n");
   }
+
+
+  // Exit boot services and call entry point
+  GetMemoryMap(&map);
+  status = gBS->ExitBootServices(image_handle, map.map_key);
+  if (EFI_ERROR(status)) {
+    Print(L"failed to exit boot services: %r\n", status);
+    Halt();
+  }
+  typedef void EntryPoint();
+  EntryPoint* entry_point = (EntryPoint*)ehdr.e_entry;
+  entry_point();
+
 
 
   Print(L"Hello, AIOS!\n");
