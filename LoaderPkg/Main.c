@@ -1,6 +1,7 @@
 #include <Uefi.h>
 #include <Library/UefiLib.h>
 #include <Library/UefiBootServicesTableLib.h>
+#include <Library/BaseMemoryLib.h>
 #include <Protocol/LoadedImage.h>
 #include <Protocol/SimpleFileSystem.h>
 #include <Guid/FileInfo.h>
@@ -13,6 +14,7 @@ typedef unsigned long long Elf64_Off;
 typedef unsigned short     Elf64_Half;
 typedef unsigned long      Elf64_Word;
 typedef unsigned long long Elf64_Xword;
+#define PT_LOAD 1
 // ELF header
 typedef struct {
   char          a[24];
@@ -34,6 +36,17 @@ typedef struct {
   Elf64_Xword   p_align;     /* Alignment of segment */
 } Elf64_Phdr;
 
+
+//
+// Memory map typedef
+//
+typedef struct {
+  unsigned long long map_size;
+  void*              map_buffer;
+  unsigned long long map_key;
+  unsigned long long descriptor_size;
+  unsigned int       descriptor_version;
+} MemoryMap;
 
 void Halt() {
   while (1) __asm__("hlt");
@@ -99,6 +112,37 @@ EFI_STATUS ReadFile(EFI_FILE_PROTOCOL *file, VOID **file_buf_ptr) {
   return file->Read(file, &file_size, *file_buf_ptr);
 }
 
+void GetMemoryMap(MemoryMap *map) {
+  EFI_STATUS status;
+  CHAR8 buf[4096*4];
+  map->map_buffer = buf;
+  map->map_size = sizeof(buf);
+  status = gBS->GetMemoryMap(
+    &map->map_size, (EFI_MEMORY_DESCRIPTOR*)map->map_buffer, &map->map_key,
+    &map->descriptor_size, &map->descriptor_version);
+  if (EFI_ERROR(status)) {
+    Print(L"failed to get memory map: %r\n", status);
+    if (status == EFI_BUFFER_TOO_SMALL) {
+      Print(L"Given buffer size: %d bytes\n", sizeof(buf));
+      Print(L"Needed buffer size: %d bytes\n", map->map_size);
+    }
+    Halt();
+  }
+  Print(L"Memory map copied.\n");
+  Print(L"Memory map size: %d bytes\n", map->map_size);
+  Print(L"Memory descriptor size: %d bytes\n", map->descriptor_size);
+}
+
+void PrintMemoryMap(MemoryMap *map) {
+  EFI_MEMORY_DESCRIPTOR *dsc;
+  for (int i = 0; i < map->map_size / map->descriptor_size; i++) {
+    dsc = (EFI_MEMORY_DESCRIPTOR*)(map->map_buffer + i * map->descriptor_size);
+    if (dsc->Type != EfiConventionalMemory) continue;
+    Print(L"Memory descriptor %d, type: %d, p_start: %x, n_pages: %d\n"
+      ,i, dsc->Type, dsc->PhysicalStart, dsc->NumberOfPages);
+  }
+}
+
 /*
  * Entry point of the UEFI application
  * This will be called by the UEFI firmware on platforms with parameters shown below:
@@ -113,6 +157,11 @@ EFI_STATUS EFIAPI UefiMain(
 ) {
   Print(L"Bootloader entry point loaded.\n");
   EFI_STATUS status;
+
+
+  MemoryMap map;
+  GetMemoryMap(&map);
+  PrintMemoryMap(&map);
 
 
   // Open root directory
@@ -154,28 +203,28 @@ EFI_STATUS EFIAPI UefiMain(
   Print(L"phoff: %d\n", ehdr.e_phoff);
   Print(L"phentsize: %d\n", ehdr.e_phentsize);
   Print(L"phnum: %d\n", ehdr.e_phnum);
+  Elf64_Phdr phdr;
+  for (int i = 0; i < ehdr.e_phnum; i++) {
+    phdr = *(Elf64_Phdr*)(file_buf + ehdr.e_phoff + i * ehdr.e_phentsize);
+    if ((int)phdr.p_type != PT_LOAD) continue;
+    Print(L"PT_LOAD type phdr %d, v_addr: %x, memsz: %d\n", i, phdr.p_vaddr, phdr.p_memsz);
 
-
-
-  // Get memory map
-  CHAR8 map[4096*4];
-  UINTN map_size=sizeof(map), map_key, descriptor_size;
-  UINT32 descriptor_version;
-  status = gBS->GetMemoryMap(
-    &map_size, (EFI_MEMORY_DESCRIPTOR*)map, &map_key,
-    &descriptor_size, &descriptor_version);
-  if (EFI_ERROR(status)) {
-    Print(L"failed to get memory map: %r\n", status);
-    if (status == EFI_BUFFER_TOO_SMALL) {
-      Print(L"Needed buffer size: %d bytes\n", map_size);
+    status = gBS->AllocatePages(
+      AllocateAddress, EfiLoaderData,
+      (phdr.p_memsz + 4095) / 4096, (EFI_PHYSICAL_ADDRESS*)&phdr.p_vaddr);
+    if (EFI_ERROR(status)) {
+      Print(L"failed to allocate pages: %r\n", status);
+      Halt();
     }
-    Halt();
+    Print(L"Pages allocated for phdr %d.\n", i);
+    CopyMem((void*)phdr.p_vaddr, (void*)phdr.p_offset, phdr.p_filesz);
+    if (phdr.p_filesz < phdr.p_memsz) {
+      SetMem((void*)(phdr.p_vaddr + phdr.p_filesz), phdr.p_memsz - phdr.p_filesz, 0);
+    }
   }
-  Print(L"Memory map copied.\n");
-  Print(L"Memory map size: %d bytes\n", map_size);
-  Print(L"Memory descriptor size: %d bytes\n", descriptor_size);
+
 
   Print(L"Hello, AIOS!\n");
-  while(1);
+  Halt();
   return EFI_SUCCESS;
 }
