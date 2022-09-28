@@ -5,6 +5,7 @@
 #include <Protocol/LoadedImage.h>
 #include <Protocol/SimpleFileSystem.h>
 #include <Guid/FileInfo.h>
+#include <../src/frame_buffer.hpp>
 
 //
 // ELF typedef (spec here: https://uclibc.org/docs/elf-64-gen.pdf)
@@ -217,6 +218,21 @@ void LoadELF(void *file_buf) {
   }
 }
 
+void GetFrameBuffer(FrameBuffer *frame_buffer) {
+  EFI_STATUS status;
+  EFI_GRAPHICS_OUTPUT_PROTOCOL *gop;
+  status = gBS->LocateProtocol(&gEfiGraphicsOutputProtocolGuid, NULL, (void**)&gop);
+  if (EFI_ERROR(status)) {
+    Print(L"failed to locate graphics output protocol: %r\n", status);
+    Halt();
+  }
+  FrameBuffer _frame_buffer = {
+    (unsigned int*)gop->Mode->FrameBufferBase, gop->Mode->FrameBufferSize,
+    gop->Mode->Info->HorizontalResolution, gop->Mode->Info->VerticalResolution,
+    (PixelFormat)gop->Mode->Info->PixelFormat, gop->Mode->Info->PixelsPerScanLine};
+  *frame_buffer = _frame_buffer;
+}
+
 /*
  * Entry point of the UEFI application
  * This will be called by the UEFI firmware on platforms with parameters shown below:
@@ -234,11 +250,13 @@ EFI_STATUS EFIAPI UefiMain(
   MemoryMap map;
   EFI_FILE_PROTOCOL *root_dir;
   VOID *file_buf;
+  FrameBuffer frame_buffer;
 
   GetMemoryMap(&map);
   OpenRootDir(image_handle, &root_dir);
   OpenAndReadFile(root_dir, L"kernel.elf", &file_buf);
   LoadELF(file_buf);
+  GetFrameBuffer(&frame_buffer);
 
   GetMemoryMap(&map);
   status = gBS->ExitBootServices(image_handle, map.map_key);
@@ -247,10 +265,10 @@ EFI_STATUS EFIAPI UefiMain(
     Halt();
   }
 
-  typedef void EntryPoint();
+  typedef void EntryPoint(FrameBuffer *frame_buffer);
   UINTN entry_point_address = *(UINTN*)(file_buf + 24); // ehdr->e_entry
   EntryPoint* entry_point = (EntryPoint*)entry_point_address;
-  entry_point();
+  entry_point(&frame_buffer);
 
   return EFI_SUCCESS;
 }
