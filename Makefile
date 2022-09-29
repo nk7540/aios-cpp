@@ -27,6 +27,9 @@ kernel:
 run:
 	qemu-system-x86_64 -bios ovmf/OVMF.fd -hda fat:rw:image -monitor stdio
 
+debug:
+	qemu-system-x86_64 -bios ovmf/OVMF.fd -hda fat:rw:image -monitor stdio -s -S
+
 commit:
 	git submodule update
 	git add .
